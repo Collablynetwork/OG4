@@ -10,10 +10,10 @@ const BUY_SIGNAL_LOG_FILE = './buy_signals.csv';
 // Global constants
 const RSI_PERIOD = 14;
 const RSI_THRESHOLDS = {
-  '1d': { min: 50, max: 60 },
-  '4h': { min: 55, max: 65 },
-  '15m': { min: 10, max: 30 },
-  '1m': { min: 30, max: 45 },
+  '1d': { min: 55, max: 65 },
+  '4h': { min: 40, max: 55 },
+  '15m': { min: 20, max: 40 },
+  '1m': { min: 30, max: 50 },
 };
 
 // Global trackers
