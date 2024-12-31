@@ -2,21 +2,15 @@ import dotenv from 'dotenv';
 import { trackedPairs } from './pairs.js';
 import { sendTelegramMessage, editTelegramMessage } from './telegram.js';
 import axios from 'axios';
+import { checkConditions } from './strategy.js';
 
 dotenv.config();
 
-const BINANCE_API_URL = 'https://api.binance.com/api/v3/';
+const BINANCE_API_URL = process.env.BINANCE_API_KEY;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_IDS;
 
 let openTrades = {}; // To track open trades by token
 let recentSignals = {}; // To track recent signals
-
-// Escape MarkdownV2 special characters
-function escapeMarkdownV2(text) {
-    const escapeChars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!'];
-    const escapedText = text.replace(new RegExp(`[${escapeChars.map(char => `\\${char}`).join('')}]`, 'g'), '\\$&');
-    return escapedText;
-}
 
 // Fetch 24-hour ticker data for a specific pair
 async function fetchData(pair) {
@@ -72,7 +66,10 @@ async function monitorPairs() {
 
             // Fetch ticker data and validate conditions
             const tickerData = await fetchData(pair);
-            if (!tickerData) continue;
+            if (!tickerData || parseFloat(tickerData.priceChangePercent) <= 0) {
+                console.log(`No significant price change for ${pair}.`);
+                continue;
+            }
 
             const rsi1d = await fetchRSI(pair, '1d');
             const rsi4h = await fetchRSI(pair, '4h');
@@ -84,48 +81,55 @@ async function monitorPairs() {
                 continue;
             }
 
-            const currentPrice = parseFloat(tickerData.lastPrice);
-            const buyRange = [
-                (currentPrice * 0.99).toFixed(8),
-                currentPrice.toFixed(8),
-            ];
-            const sellPrice = (currentPrice * 1.011).toFixed(8);
+            console.log(`RSI for ${pair}: 1d=${rsi1d}, 4h=${rsi4h}, 15m=${rsi15m}, 1m=${rsi1m}`);
 
-            const btcData = await fetchData('BTCUSDT');
-            const btcPrice = parseFloat(btcData.lastPrice).toFixed(2);
-            const btcChange = parseFloat(btcData.priceChangePercent).toFixed(2);
+            const conditionsMet = checkConditions(rsi1d, rsi4h, rsi15m, rsi1m, parseFloat(tickerData.priceChangePercent));
+            if (conditionsMet && !openTrades[pair]) {
+                console.log(`Conditions met for ${pair}. Preparing buy signal...`);
 
-            const message = `
+                const currentPrice = parseFloat(tickerData.lastPrice);
+                const buyRange = [
+                    (currentPrice * 0.99).toFixed(8),
+                    currentPrice.toFixed(8),
+                ];
+                const sellPrice = (currentPrice * 1.011).toFixed(8);
+
+                const btcData = await fetchData('BTCUSDT');
+                const btcPrice = parseFloat(btcData.lastPrice).toFixed(2);
+                const btcChange = parseFloat(btcData.priceChangePercent).toFixed(2);
+
+                const message = `
 📢 **Buy Signal**
-💎 Token: ${escapeMarkdownV2(pair)}
-💰 Buy Range: ${escapeMarkdownV2(buyRange[0])} - ${escapeMarkdownV2(buyRange[1])}
-💰 Sell Price: ${escapeMarkdownV2(sellPrice)}
-🕒 Timeframe: 1m
-💲 BTC Price: $${escapeMarkdownV2(btcPrice)} (${escapeMarkdownV2(btcChange)}%)
-💹 Trade Now on: [Binance](https://www.binance.com/en/trade/${escapeMarkdownV2(pair)})
+💎 Token: #${symbol}
+💰 Buy Price: ${currentPrice}
+💰 Sell Price: ${sellPrice}
+🕒 Timeframe: 1m${btcInfo}
+💹 Trade Now on: [Binance](https://www.binance.com/en/trade/${symbol})
 `;
 
-            try {
-                const messageId = await sendTelegramMessage(TELEGRAM_CHAT_ID, message);
-                console.log(`Telegram message sent for ${pair}. Message ID: ${messageId}`);
+                try {
+                    const messageId = await sendTelegramMessage(TELEGRAM_CHAT_ID, message);
+                    console.log(`Telegram message sent for ${pair}. Message ID: ${messageId}`);
 
-                openTrades[pair] = {
-                    buyRange,
-                    sellPrice,
-                    messageId,
-                    buyTimestamp: Date.now(),
-                    lowestPrice: currentPrice,
-                };
+                    openTrades[pair] = {
+                        buyRange,
+                        sellPrice,
+                        messageId,
+                        buyTimestamp: Date.now(),
+                        lowestPrice: currentPrice,
+                    };
 
-                recentSignals[pair] = Date.now();
-            } catch (error) {
-                console.error(`Failed to send Telegram message for ${pair}:`, error.message);
+                    recentSignals[pair] = Date.now();
+                } catch (error) {
+                    console.error(`Failed to send Telegram message for ${pair}:`, error.message);
+                }
             }
         } catch (error) {
             console.error(`Error monitoring pair ${pair}:`, error.message);
         }
     }
 
+    // Check for target hits
     await checkOpenTrades();
 }
 
@@ -167,7 +171,7 @@ async function checkOpenTrades() {
 ₿ BTC Price: $${btcPrice} (${btcChange}%)
 ✅ Target Achieved
 ⏱️ Duration: ${duration}
-💹 Trade Now on: [Binance](https://www.binance.com/en/trade/${pair})
+💹 Traded on: [Binance](https://www.binance.com/en/trade/${pair})
 `;
 
                 await editTelegramMessage(TELEGRAM_CHAT_ID, trade.messageId, updatedMessage);
